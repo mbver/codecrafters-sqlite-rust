@@ -24,6 +24,12 @@ fn main() -> Result<()> {
             let page_size = u16::from_be_bytes([header[16], header[17]]);
 
             println!("database page size: {}", page_size);
+
+            let mut page_header = [0; 8];
+            file.read_exact(&mut page_header)?;
+
+            let cell_count = u16::from_be_bytes([page_header[3], page_header[4]]);
+            println!("number of tables: {}", cell_count);
         }
         _ => bail!("Missing or invalid command passed: {}", command),
     }
