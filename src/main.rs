@@ -30,8 +30,29 @@ fn main() -> Result<()> {
 
             println!();
         }
+        query if let Some(table_name) = count_query_table_name(query) => {
+            println!("{}", database.table_row_count(table_name)?);
+        }
         _ => bail!("Missing or invalid command passed: {}", command),
     }
 
     Ok(())
+}
+
+fn count_query_table_name(query: &str) -> Option<&str> {
+    let query = query.trim();
+    let table_name = strip_prefix_ignore_ascii_case(query, "SELECT COUNT(*) FROM ")?;
+    let table_name = table_name.trim();
+    if table_name.is_empty() {
+        None
+    } else {
+        Some(table_name)
+    }
+}
+
+fn strip_prefix_ignore_ascii_case<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    s.get(..prefix.len())
+        .filter(|part| part.eq_ignore_ascii_case(prefix))?;
+
+    s.get(prefix.len()..)
 }

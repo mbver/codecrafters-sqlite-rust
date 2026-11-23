@@ -85,4 +85,32 @@ impl Database {
 
         Ok(names)
     }
+    pub fn page_cell_count(&mut self, page_number: u32) -> io::Result<u16> {
+        let page_size = self.page_size()? as u64;
+        let page_offset = (page_number as u64 - 1) * page_size;
+
+        self.reader.seek(SeekFrom::Start(page_offset + 3))?;
+
+        let mut buffer = [0u8; 2];
+        self.reader.read_exact(&mut buffer)?;
+
+        Ok(u16::from_be_bytes(buffer))
+    }
+    pub fn table_rootpage(&mut self, table_name: &str) -> io::Result<u32> {
+        let cells = self.schema_cells()?;
+
+        for cell in cells {
+            let record = SchemaRecord::try_from(cell.record)?;
+
+            if record.record_type == "table" && record.name == table_name {
+                return Ok(record.rootpage as u32);
+            }
+        }
+
+        Err(io::Error::from(io::ErrorKind::NotFound))
+    }
+    pub fn table_row_count(&mut self, table_name: &str) -> io::Result<u16> {
+        let rootpage = self.table_rootpage(table_name)?;
+        self.page_cell_count(rootpage)
+    }
 }
