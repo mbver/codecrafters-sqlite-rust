@@ -1,7 +1,7 @@
 #[derive(Debug)]
 pub enum Statement {
     CreateTable(CreateTable),
-    // Select(Select),
+    Select(SelectStatement),
     // Insert(Insert),
 }
 
@@ -46,4 +46,50 @@ pub enum TableConstraint {
     //     columns: Vec<String>,
     //     references: References,
     // },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectStatement {
+    pub columns: SelectColumns,
+    pub table_name: String,
+    pub where_clause: Option<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SelectColumns {
+    All,
+    Count,
+    Columns(Vec<String>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expression {
+    Comparison {
+        left: Operand,
+        operator: ComparisonOperator,
+        right: Operand,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Operand {
+    Column(String),
+    Literal(Literal),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Literal {
+    String(String),
+    Number(String),
+    Null,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ComparisonOperator {
+    Equal,
+    NotEqual,
+    LessThan,
+    LessThanOrEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
 }

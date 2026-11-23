@@ -154,8 +154,11 @@ impl Database {
         let statement = crate::sql::parse_sql(sql)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        let create_table = match statement {
-            crate::sql::ast::Statement::CreateTable(create_table) => create_table,
+        let crate::sql::ast::Statement::CreateTable(create_table) = statement else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid create table statement",
+            ));
         };
 
         let mut index = 0;

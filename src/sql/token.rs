@@ -11,11 +11,26 @@ pub enum Token {
     Null,
     Unique,
 
+    // SELECT keywords
+    Select,
+    From,
+    Where,
+
     // Identifiers and literals
     Identifier(String),
     Number(String),
+    String(String),
+
+    // Comparison operators
+    Equal,
+    NotEqual,
+    LessThan,
+    LessThanOrEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
 
     // Symbols
+    Star,
     LeftParen,
     RightParen,
     Comma,

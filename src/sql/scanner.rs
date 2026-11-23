@@ -39,6 +39,37 @@ impl Scanner {
             ')' => Ok(Token::RightParen),
             ',' => Ok(Token::Comma),
             ';' => Ok(Token::Semicolon),
+            '*' => Ok(Token::Star),
+
+            '=' => Ok(Token::Equal),
+
+            '!' => {
+                if self.match_char('=') {
+                    Ok(Token::NotEqual)
+                } else {
+                    Err("Expected '=' after '!'".to_string())
+                }
+            }
+
+            '<' => {
+                if self.match_char('=') {
+                    Ok(Token::LessThanOrEqual)
+                } else if self.match_char('>') {
+                    Ok(Token::NotEqual)
+                } else {
+                    Ok(Token::LessThan)
+                }
+            }
+
+            '>' => {
+                if self.match_char('=') {
+                    Ok(Token::GreaterThanOrEqual)
+                } else {
+                    Ok(Token::GreaterThan)
+                }
+            }
+
+            '\'' => self.scan_string(),
 
             'a'..='z' | 'A'..='Z' | '_' => self.scan_identifier(ch),
 
@@ -69,6 +100,11 @@ impl Scanner {
             "NOT" => Token::Not,
             "NULL" => Token::Null,
             "UNIQUE" => Token::Unique,
+
+            "SELECT" => Token::Select,
+            "FROM" => Token::From,
+            "WHERE" => Token::Where,
+
             _ => Token::Identifier(identifier),
         };
 
@@ -87,6 +123,30 @@ impl Scanner {
         }
 
         Ok(Token::Number(number))
+    }
+
+    fn scan_string(&mut self) -> Result<Token, String> {
+        let mut value = String::new();
+
+        while let Some(ch) = self.peek() {
+            if ch == '\'' {
+                self.advance();
+                return Ok(Token::String(value));
+            }
+
+            value.push(self.advance());
+        }
+
+        Err("Unterminated string literal".to_string())
+    }
+
+    fn match_char(&mut self, expected: char) -> bool {
+        if self.peek() == Some(expected) {
+            self.advance();
+            true
+        } else {
+            false
+        }
     }
 
     fn skip_whitespace(&mut self) {

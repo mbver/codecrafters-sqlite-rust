@@ -1,4 +1,11 @@
+use std::cmp::Ordering;
+use std::io;
+
 use crate::database::Database;
+use crate::sql::ast::{
+    ComparisonOperator, Expression, Literal, Operand, SelectColumns, SelectStatement, Statement,
+};
+use crate::sql::parse_sql;
 use anyhow::{Result, bail};
 
 mod database;
@@ -31,64 +38,125 @@ fn main() -> Result<()> {
 
             println!();
         }
-        query if let Some(table_name) = count_rows_query_table_name(query) => {
-            println!("{}", database.table_row_count(table_name)?);
-        }
-        query if let Some((table_name, column_names)) = select_column_query(query) => {
-            let rows = database.table_column_values(table_name, &column_names)?;
-
-            for row in rows {
-                let values = row
-                    .iter()
-                    .map(|value| value.to_string())
-                    .collect::<Vec<_>>();
-
-                println!("{}", values.join("|"));
+        query => match parse_sql(query)? {
+            Statement::CreateTable(_) => bail!("create table is unsupported"),
+            Statement::Select(select) => {
+                execute_select(&mut database, select)?;
             }
-        }
+        },
         _ => bail!("Missing or invalid command passed: {}", command),
     }
 
     Ok(())
 }
 
-fn count_rows_query_table_name(query: &str) -> Option<&str> {
-    let query = query.trim();
-    let table_name = strip_prefix_ignore_ascii_case(query, "SELECT COUNT(*) FROM ")?;
-    let table_name = table_name.trim();
-    if table_name.is_empty() {
-        None
-    } else {
-        Some(table_name)
+fn execute_select(database: &mut Database, select: SelectStatement) -> io::Result<()> {
+    let cells = database.table_cells(&select.table_name)?;
+
+    // Resolve selected columns.
+    let column_indices = match select.columns {
+        SelectColumns::Count => {
+            println!("{}", database.table_row_count(&select.table_name)?);
+            return Ok(());
+        }
+
+        SelectColumns::All => {
+            let column_count = cells
+                .first()
+                .map(|cell| cell.record.values.len())
+                .unwrap_or(0);
+
+            (0..column_count).collect()
+        }
+        SelectColumns::Columns(column_names) => column_names
+            .iter()
+            .map(|name| database.table_column_index(&select.table_name, name))
+            .collect::<io::Result<Vec<_>>>()?,
+    };
+
+    // Resolve the WHERE column once, not for every record.
+    let filter = match select.where_clause {
+        Some(expression) => Some(prepare_filter(database, &select.table_name, expression)?),
+        None => None,
+    };
+
+    for cell in cells {
+        let record = &cell.record;
+
+        // Apply WHERE before projecting selected columns.
+        if let Some((column_index, operator, expected)) = &filter {
+            let actual = record.values.get(*column_index).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "WHERE column index out of bounds",
+                )
+            })?;
+
+            if !matches_comparison(&actual.to_string(), operator, expected) {
+                continue;
+            }
+        }
+
+        let values = column_indices
+            .iter()
+            .map(|&index| {
+                record
+                    .values
+                    .get(index)
+                    .map(|value| value.to_string())
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Selected column index out of bounds",
+                        )
+                    })
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+
+        println!("{}", values.join("|"));
+    }
+
+    Ok(())
+}
+
+fn prepare_filter(
+    database: &mut Database,
+    table_name: &str,
+    expression: Expression,
+) -> io::Result<(usize, ComparisonOperator, String)> {
+    match expression {
+        Expression::Comparison {
+            left: Operand::Column(column_name),
+            operator,
+            right: Operand::Literal(literal),
+        } => {
+            let column_index = database.table_column_index(table_name, &column_name)?;
+
+            let expected = match literal {
+                Literal::String(value) => value,
+                Literal::Number(value) => value,
+                Literal::Null => "NULL".to_string(),
+            };
+
+            Ok((column_index, operator, expected))
+        }
+
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Unsupported WHERE expression",
+        )),
     }
 }
 
-fn select_column_query(query: &str) -> Option<(&str, Vec<&str>)> {
-    let query = query.trim();
-    let query = strip_prefix_ignore_ascii_case(query, "SELECT ")?;
+fn matches_comparison(actual: &str, operator: &ComparisonOperator, expected: &str) -> bool {
+    let ordering = actual.cmp(expected);
 
-    let from_index = query
-        .as_bytes()
-        .windows(6)
-        .position(|window| window.eq_ignore_ascii_case(b" FROM "))?;
-
-    let column_names = query[..from_index]
-        .split(',')
-        .map(str::trim)
-        .collect::<Vec<_>>();
-
-    let table_name = query[from_index + 6..].trim();
-
-    if column_names.iter().any(|name| name.is_empty()) || table_name.is_empty() {
-        return None;
+    match operator {
+        ComparisonOperator::Equal => ordering == Ordering::Equal,
+        ComparisonOperator::NotEqual => ordering != Ordering::Equal,
+        ComparisonOperator::LessThan => ordering == Ordering::Less,
+        ComparisonOperator::LessThanOrEqual => ordering != Ordering::Greater,
+        ComparisonOperator::GreaterThan => ordering == Ordering::Greater,
+        ComparisonOperator::GreaterThanOrEqual => ordering != Ordering::Less,
     }
-
-    Some((table_name, column_names))
-}
-
-fn strip_prefix_ignore_ascii_case<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
-    s.get(..prefix.len())
-        .filter(|part| part.eq_ignore_ascii_case(prefix))?;
-
-    s.get(prefix.len()..)
 }

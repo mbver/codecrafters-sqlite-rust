@@ -1,5 +1,6 @@
 use super::ast::{
-    ColumnConstraint, ColumnDefinition, CreateTable, Statement, TableConstraint, TableElement,
+    ColumnConstraint, ColumnDefinition, ComparisonOperator, CreateTable, Expression, Literal,
+    Operand, SelectColumns, SelectStatement, Statement, TableConstraint, TableElement,
 };
 use super::token::Token;
 
@@ -28,6 +29,7 @@ impl Parser {
     fn statement(&mut self) -> Result<Statement, String> {
         match self.peek() {
             Token::Create => Ok(Statement::CreateTable(self.create_table_stmt()?)),
+            Token::Select => Ok(Statement::Select(self.select_stmt()?)),
             _ => Err(format!("Unexpected token: {:?}", self.peek())),
         }
     }
@@ -188,7 +190,117 @@ impl Parser {
 
         Ok(identifiers)
     }
+    fn select_stmt(&mut self) -> Result<SelectStatement, String> {
+        self.consume(&Token::Select, "Expected SELECT")?;
 
+        let columns = self.select_columns()?;
+
+        self.consume(&Token::From, "Expected FROM after select columns")?;
+
+        let table_name = self.identifier()?;
+
+        let where_clause = if self.matches(&Token::Where) {
+            Some(self.where_clause()?)
+        } else {
+            None
+        };
+
+        Ok(SelectStatement {
+            columns,
+            table_name,
+            where_clause,
+        })
+    }
+    fn select_columns(&mut self) -> Result<SelectColumns, String> {
+        if self.matches(&Token::Star) {
+            self.advance();
+            return Ok(SelectColumns::All);
+        }
+
+        // COUNT(*)
+        if matches!(
+            self.peek(),
+            Token::Identifier(name) if name.eq_ignore_ascii_case("COUNT")
+        ) {
+            self.advance();
+
+            self.consume(&Token::LeftParen, "Expected '(' after COUNT")?;
+            self.consume(&Token::Star, "Expected '*' inside COUNT")?;
+            self.consume(&Token::RightParen, "Expected ')' after COUNT(*)")?;
+
+            return Ok(SelectColumns::Count);
+        }
+
+        let mut columns = vec![self.identifier()?];
+
+        while self.matches(&Token::Comma) {
+            self.advance();
+            columns.push(self.identifier()?);
+        }
+
+        Ok(SelectColumns::Columns(columns))
+    }
+    fn where_clause(&mut self) -> Result<Expression, String> {
+        self.consume(&Token::Where, "Expected WHERE")?;
+
+        self.expression()
+    }
+    fn expression(&mut self) -> Result<Expression, String> {
+        self.comparison()
+    }
+    fn comparison(&mut self) -> Result<Expression, String> {
+        let left = self.operand()?;
+
+        let operator = self.comparison_operator()?;
+
+        let right = self.operand()?;
+
+        Ok(Expression::Comparison {
+            left,
+            operator,
+            right,
+        })
+    }
+    fn comparison_operator(&mut self) -> Result<ComparisonOperator, String> {
+        let operator = match self.advance() {
+            Token::Equal => ComparisonOperator::Equal,
+            Token::NotEqual => ComparisonOperator::NotEqual,
+            Token::LessThan => ComparisonOperator::LessThan,
+            Token::LessThanOrEqual => ComparisonOperator::LessThanOrEqual,
+            Token::GreaterThan => ComparisonOperator::GreaterThan,
+            Token::GreaterThanOrEqual => ComparisonOperator::GreaterThanOrEqual,
+            token => {
+                return Err(format!("Expected comparison operator, found {:?}", token));
+            }
+        };
+
+        Ok(operator)
+    }
+    fn operand(&mut self) -> Result<Operand, String> {
+        match self.peek() {
+            Token::Identifier(_) => Ok(Operand::Column(self.identifier()?)),
+            Token::String(_) => Ok(Operand::Literal(self.string()?)),
+            Token::Number(_) => Ok(Operand::Literal(self.number_literal()?)),
+            Token::Null => {
+                self.advance();
+                Ok(Operand::Literal(Literal::Null))
+            }
+            token => Err(format!("Expected operand, found {:?}", token)),
+        }
+    }
+    fn string(&mut self) -> Result<Literal, String> {
+        match self.advance() {
+            Token::String(value) => Ok(Literal::String(value)),
+            token => Err(format!("Expected string, found {:?}", token)),
+        }
+    }
+
+    fn number_literal(&mut self) -> Result<Literal, String> {
+        match self.advance() {
+            Token::Number(value) => Ok(Literal::Number(value)),
+            token => Err(format!("Expected number, found {:?}", token)),
+        }
+    }
     fn identifier(&mut self) -> Result<String, String> {
         match self.advance() {
             Token::Identifier(name) => Ok(name),
