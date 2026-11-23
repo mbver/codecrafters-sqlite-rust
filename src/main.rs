@@ -30,7 +30,7 @@ fn main() -> Result<()> {
 
             println!();
         }
-        query if let Some(table_name) = count_query_table_name(query) => {
+        query if let Some(table_name) = count_rows_query_table_name(query) => {
             println!("{}", database.table_row_count(table_name)?);
         }
         _ => bail!("Missing or invalid command passed: {}", command),
@@ -39,7 +39,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn count_query_table_name(query: &str) -> Option<&str> {
+fn count_rows_query_table_name(query: &str) -> Option<&str> {
     let query = query.trim();
     let table_name = strip_prefix_ignore_ascii_case(query, "SELECT COUNT(*) FROM ")?;
     let table_name = table_name.trim();
