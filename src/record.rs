@@ -6,6 +6,7 @@ pub struct Cell {
     pub rowid: u64,
     pub record: Record,
 }
+#[derive(Clone)]
 #[allow(dead_code)]
 pub enum Value {
     Null,
@@ -15,6 +16,17 @@ pub enum Value {
     Blob(Vec<u8>),
 }
 
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Null => write!(f, "NULL"),
+            Value::Integer(value) => write!(f, "{value}"),
+            Value::Float(value) => write!(f, "{value}"),
+            Value::Text(value) => write!(f, "{value}"),
+            Value::Blob(value) => write!(f, "{value:?}"),
+        }
+    }
+}
 impl Value {
     pub fn into_text(self) -> io::Result<String> {
         match self {

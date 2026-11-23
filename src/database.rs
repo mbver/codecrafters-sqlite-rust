@@ -3,7 +3,7 @@ use std::{
     io::{self, BufReader, Read, Seek, SeekFrom},
 };
 
-use crate::record::{Cell, SchemaRecord, read_cell};
+use crate::record::{Cell, SchemaRecord, Value, read_cell};
 
 pub struct Database {
     reader: BufReader<File>,
@@ -35,16 +35,40 @@ impl Database {
 
         Ok(u16::from_be_bytes(buffer))
     }
-    pub fn schema_cell_count(&mut self) -> io::Result<u16> {
-        self.reader.seek(SeekFrom::Start(100))?;
+    pub fn page_cell_count(&mut self, page_number: u32) -> io::Result<u16> {
+        let page_size = self.page_size()? as u64;
+        let page_offset = (page_number as u64 - 1) * page_size;
+
+        let header_offset = if page_number == 1 {
+            page_offset + 100
+        } else {
+            page_offset
+        };
+
+        self.reader.seek(SeekFrom::Start(header_offset))?;
 
         let mut page_header = [0u8; 8];
         self.reader.read_exact(&mut page_header)?;
 
         Ok(u16::from_be_bytes([page_header[3], page_header[4]]))
     }
-    pub fn schema_cell_pointers(&mut self, cell_count: u16) -> io::Result<Vec<usize>> {
-        self.reader.seek(SeekFrom::Start(108))?;
+    pub fn page_cell_pointers(
+        &mut self,
+        page_number: u32,
+        cell_count: u16,
+    ) -> io::Result<Vec<usize>> {
+        let page_size = self.page_size()? as u64;
+        let page_offset = (page_number as u64 - 1) * page_size;
+
+        let header_offset = if page_number == 1 {
+            page_offset + 100
+        } else {
+            page_offset
+        };
+
+        let pointer_offset = header_offset + 8;
+
+        self.reader.seek(SeekFrom::Start(pointer_offset))?;
 
         let mut pointers = Vec::with_capacity(cell_count as usize);
 
@@ -58,20 +82,33 @@ impl Database {
 
         Ok(pointers)
     }
-    pub fn schema_cells(&mut self) -> io::Result<Vec<Cell>> {
-        let cell_count = self.schema_cell_count()?;
-        let pointers = self.schema_cell_pointers(cell_count)?;
+    pub fn page_cells(&mut self, page_number: u32) -> io::Result<Vec<Cell>> {
+        if page_number == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Invalid page number",
+            ));
+        }
+
+        let cell_count = self.page_cell_count(page_number)?;
+        let pointers = self.page_cell_pointers(page_number, cell_count)?;
+
+        let page_size = self.page_size()? as u64;
+        let page_offset = (page_number as u64 - 1) * page_size;
 
         let mut cells = Vec::with_capacity(cell_count as usize);
 
         for pointer in pointers {
-            self.reader.seek(SeekFrom::Start(pointer as u64))?;
+            let cell_offset = page_offset + pointer as u64;
 
-            let cell = read_cell(&mut self.reader)?;
-            cells.push(cell);
+            self.reader.seek(SeekFrom::Start(cell_offset))?;
+            cells.push(read_cell(&mut self.reader)?);
         }
 
         Ok(cells)
+    }
+    pub fn schema_cells(&mut self) -> io::Result<Vec<Cell>> {
+        self.page_cells(1)
     }
     pub fn table_names(&mut self) -> io::Result<Vec<String>> {
         let cells = self.schema_cells()?;
@@ -85,32 +122,91 @@ impl Database {
 
         Ok(names)
     }
-    pub fn page_cell_count(&mut self, page_number: u32) -> io::Result<u16> {
-        let page_size = self.page_size()? as u64;
-        let page_offset = (page_number as u64 - 1) * page_size;
-
-        self.reader.seek(SeekFrom::Start(page_offset + 3))?;
-
-        let mut buffer = [0u8; 2];
-        self.reader.read_exact(&mut buffer)?;
-
-        Ok(u16::from_be_bytes(buffer))
+    pub fn table_row_count(&mut self, table_name: &str) -> io::Result<u16> {
+        let rootpage = self.table_rootpage(table_name)?;
+        self.page_cell_count(rootpage)
     }
-    pub fn table_rootpage(&mut self, table_name: &str) -> io::Result<u32> {
+    pub fn table_schema(&mut self, table_name: &str) -> io::Result<SchemaRecord> {
         let cells = self.schema_cells()?;
 
         for cell in cells {
             let record = SchemaRecord::try_from(cell.record)?;
 
             if record.record_type == "table" && record.name == table_name {
-                return Ok(record.rootpage as u32);
+                return Ok(record);
             }
         }
 
         Err(io::Error::from(io::ErrorKind::NotFound))
     }
-    pub fn table_row_count(&mut self, table_name: &str) -> io::Result<u16> {
+    pub fn table_rootpage(&mut self, table_name: &str) -> io::Result<u32> {
+        let schema = self.table_schema(table_name)?;
+        Ok(schema.rootpage as u32)
+    }
+
+    pub fn table_column_index(&mut self, table_name: &str, column_name: &str) -> io::Result<usize> {
+        let schema = self.table_schema(table_name)?;
+
+        let sql = schema.sql.as_deref().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "Missing CREATE TABLE SQL")
+        })?;
+
+        let statement = crate::sql::parse_sql(sql)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+        let create_table = match statement {
+            crate::sql::ast::Statement::CreateTable(create_table) => create_table,
+        };
+
+        let mut index = 0;
+
+        for element in create_table.elements {
+            if let crate::sql::ast::TableElement::ColumnDefinition(column) = element {
+                if column.name.eq_ignore_ascii_case(column_name) {
+                    return Ok(index);
+                }
+
+                index += 1;
+            }
+        }
+
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "Column '{}' not found in table '{}'",
+                column_name, table_name
+            ),
+        ))
+    }
+    pub fn table_cells(&mut self, table_name: &str) -> io::Result<Vec<Cell>> {
         let rootpage = self.table_rootpage(table_name)?;
-        self.page_cell_count(rootpage)
+        self.page_cells(rootpage)
+    }
+    pub fn table_column_values(
+        &mut self,
+        table_name: &str,
+        column_name: &str,
+    ) -> io::Result<Vec<Value>> {
+        let column_index = self.table_column_index(table_name, column_name)?;
+        let cells = self.table_cells(table_name)?;
+
+        let mut values = Vec::with_capacity(cells.len());
+
+        for cell in cells {
+            let value = cell
+                .record
+                .values
+                .get(column_index)
+                .cloned()
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Column index {} is missing from record", column_index),
+                    )
+                })?;
+
+            values.push(value);
+        }
+        Ok(values)
     }
 }

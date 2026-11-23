@@ -3,6 +3,7 @@ use anyhow::{Result, bail};
 
 mod database;
 mod record;
+mod sql;
 
 fn main() -> Result<()> {
     // Parse arguments
@@ -33,6 +34,13 @@ fn main() -> Result<()> {
         query if let Some(table_name) = count_rows_query_table_name(query) => {
             println!("{}", database.table_row_count(table_name)?);
         }
+        query if let Some((table_name, column_name)) = select_column_query(query) => {
+            let values = database.table_column_values(table_name, column_name)?;
+
+            for value in values {
+                println!("{value}");
+            }
+        }
         _ => bail!("Missing or invalid command passed: {}", command),
     }
 
@@ -48,6 +56,22 @@ fn count_rows_query_table_name(query: &str) -> Option<&str> {
     } else {
         Some(table_name)
     }
+}
+
+fn select_column_query(query: &str) -> Option<(&str, &str)> {
+    let query = query.trim();
+    let query = strip_prefix_ignore_ascii_case(query, "SELECT ")?;
+
+    let (column_name, table_name) = query.split_once(" FROM ")?;
+
+    let column_name = column_name.trim();
+    let table_name = table_name.trim();
+
+    if column_name.is_empty() || table_name.is_empty() {
+        return None;
+    }
+
+    Some((table_name, column_name))
 }
 
 fn strip_prefix_ignore_ascii_case<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
