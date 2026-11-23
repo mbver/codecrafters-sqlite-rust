@@ -62,10 +62,13 @@ fn select_column_query(query: &str) -> Option<(&str, &str)> {
     let query = query.trim();
     let query = strip_prefix_ignore_ascii_case(query, "SELECT ")?;
 
-    let (column_name, table_name) = query.split_once(" FROM ")?;
+    let from_index = query
+        .as_bytes()
+        .windows(6)
+        .position(|window| window.eq_ignore_ascii_case(b" FROM "))?;
 
-    let column_name = column_name.trim();
-    let table_name = table_name.trim();
+    let column_name = query[..from_index].trim();
+    let table_name = query[from_index + 6..].trim();
 
     if column_name.is_empty() || table_name.is_empty() {
         return None;
