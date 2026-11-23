@@ -34,11 +34,16 @@ fn main() -> Result<()> {
         query if let Some(table_name) = count_rows_query_table_name(query) => {
             println!("{}", database.table_row_count(table_name)?);
         }
-        query if let Some((table_name, column_name)) = select_column_query(query) => {
-            let values = database.table_column_values(table_name, column_name)?;
+        query if let Some((table_name, column_names)) = select_column_query(query) => {
+            let rows = database.table_column_values(table_name, &column_names)?;
 
-            for value in values {
-                println!("{value}");
+            for row in rows {
+                let values = row
+                    .iter()
+                    .map(|value| value.to_string())
+                    .collect::<Vec<_>>();
+
+                println!("{}", values.join("|"));
             }
         }
         _ => bail!("Missing or invalid command passed: {}", command),
@@ -58,7 +63,7 @@ fn count_rows_query_table_name(query: &str) -> Option<&str> {
     }
 }
 
-fn select_column_query(query: &str) -> Option<(&str, &str)> {
+fn select_column_query(query: &str) -> Option<(&str, Vec<&str>)> {
     let query = query.trim();
     let query = strip_prefix_ignore_ascii_case(query, "SELECT ")?;
 
@@ -67,14 +72,18 @@ fn select_column_query(query: &str) -> Option<(&str, &str)> {
         .windows(6)
         .position(|window| window.eq_ignore_ascii_case(b" FROM "))?;
 
-    let column_name = query[..from_index].trim();
+    let column_names = query[..from_index]
+        .split(',')
+        .map(str::trim)
+        .collect::<Vec<_>>();
+
     let table_name = query[from_index + 6..].trim();
 
-    if column_name.is_empty() || table_name.is_empty() {
+    if column_names.iter().any(|name| name.is_empty()) || table_name.is_empty() {
         return None;
     }
 
-    Some((table_name, column_name))
+    Some((table_name, column_names))
 }
 
 fn strip_prefix_ignore_ascii_case<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {

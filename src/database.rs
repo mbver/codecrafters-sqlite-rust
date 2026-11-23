@@ -185,28 +185,39 @@ impl Database {
     pub fn table_column_values(
         &mut self,
         table_name: &str,
-        column_name: &str,
-    ) -> io::Result<Vec<Value>> {
-        let column_index = self.table_column_index(table_name, column_name)?;
+        column_names: &[&str],
+    ) -> io::Result<Vec<Vec<Value>>> {
+        let column_indices = column_names
+            .iter()
+            .map(|name| self.table_column_index(table_name, name))
+            .collect::<io::Result<Vec<_>>>()?; // collect Result<X> into Result<Vec<X>>
+
         let cells = self.table_cells(table_name)?;
 
-        let mut values = Vec::with_capacity(cells.len());
+        let mut rows = Vec::with_capacity(cells.len());
 
         for cell in cells {
-            let value = cell
-                .record
-                .values
-                .get(column_index)
-                .cloned()
-                .ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("Column index {} is missing from record", column_index),
-                    )
-                })?;
+            let mut values = Vec::with_capacity(column_indices.len());
 
-            values.push(value);
+            for &column_index in &column_indices {
+                let value = cell
+                    .record
+                    .values
+                    .get(column_index)
+                    .cloned()
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Column index {} is missing from record", column_index),
+                        )
+                    })?;
+
+                values.push(value);
+            }
+
+            rows.push(values);
         }
-        Ok(values)
+
+        Ok(rows)
     }
 }
