@@ -1,6 +1,8 @@
+use crate::database::Database;
 use anyhow::{Result, bail};
-use std::fs::File;
-use std::io::prelude::*;
+
+mod database;
+mod record;
 
 fn main() -> Result<()> {
     // Parse arguments
@@ -10,26 +12,23 @@ fn main() -> Result<()> {
         2 => bail!("Missing <command>"),
         _ => {}
     }
+    let mut database = Database::open(&args[1])?;
 
     // Parse command and act accordingly
     let command = &args[2];
     match command.as_str() {
         ".dbinfo" => {
-            let mut file = File::open(&args[1])?;
-            let mut header = [0; 100];
-            file.read_exact(&mut header)?;
+            println!("database page size: {}", database.page_size()?);
+            println!("number of tables: {}", database.table_count()?);
+        }
+        ".tables" => {
+            let table_names = database.table_names()?;
 
-            // The page size is stored at the 16th byte offset, using 2 bytes in big-endian order
-            #[allow(unused_variables)]
-            let page_size = u16::from_be_bytes([header[16], header[17]]);
+            for name in table_names {
+                print!("{name} ");
+            }
 
-            println!("database page size: {}", page_size);
-
-            let mut page_header = [0; 8];
-            file.read_exact(&mut page_header)?;
-
-            let cell_count = u16::from_be_bytes([page_header[3], page_header[4]]);
-            println!("number of tables: {}", cell_count);
+            println!();
         }
         _ => bail!("Missing or invalid command passed: {}", command),
     }
