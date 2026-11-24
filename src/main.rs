@@ -2,8 +2,9 @@ use std::cmp::Ordering;
 use std::io;
 
 use crate::database::Database;
+use crate::record::Value;
 use crate::sql::ast::{
-    ComparisonOperator, Expression, Literal, Operand, SelectColumns, SelectStatement, Statement,
+    ComparisonOperator, Expression, Operand, SelectColumns, SelectStatement, Statement,
 };
 use crate::sql::parse_sql;
 use anyhow::{Result, bail};
@@ -11,6 +12,8 @@ use anyhow::{Result, bail};
 mod database;
 mod record;
 mod sql;
+
+type PreparedFilter = (usize, ComparisonOperator, Value);
 
 fn main() -> Result<()> {
     // Parse arguments
@@ -44,7 +47,6 @@ fn main() -> Result<()> {
                 execute_select(&mut database, select)?;
             }
         },
-        _ => bail!("Missing or invalid command passed: {}", command),
     }
 
     Ok(())
@@ -75,11 +77,7 @@ fn execute_select(database: &mut Database, select: SelectStatement) -> io::Resul
     };
 
     // Resolve the WHERE column once, not for every record.
-    let filter = match select.where_clause {
-        Some(expression) => Some(prepare_filter(database, &select.table_name, expression)?),
-        None => None,
-    };
-
+    let filter = prepare_filter(database, &select.table_name, select.where_clause)?;
     for cell in cells {
         let record = &cell.record;
 
@@ -92,7 +90,7 @@ fn execute_select(database: &mut Database, select: SelectStatement) -> io::Resul
                 )
             })?;
 
-            if !matches_comparison(&actual.to_string(), operator, expected) {
+            if !matches_comparison(&actual, operator, expected) {
                 continue;
             }
         }
@@ -122,41 +120,44 @@ fn execute_select(database: &mut Database, select: SelectStatement) -> io::Resul
 fn prepare_filter(
     database: &mut Database,
     table_name: &str,
-    expression: Expression,
-) -> io::Result<(usize, ComparisonOperator, String)> {
-    match expression {
-        Expression::Comparison {
+    where_clause: Option<Expression>,
+) -> io::Result<Option<PreparedFilter>> {
+    match where_clause {
+        Some(Expression::Comparison {
             left: Operand::Column(column_name),
             operator,
             right: Operand::Literal(literal),
-        } => {
+        }) => {
             let column_index = database.table_column_index(table_name, &column_name)?;
 
-            let expected = match literal {
-                Literal::String(value) => value,
-                Literal::Number(value) => value,
-                Literal::Null => "NULL".to_string(),
-            };
+            let expected = Value::try_from(literal)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
 
-            Ok((column_index, operator, expected))
+            Ok(Some((column_index, operator, expected)))
         }
 
-        _ => Err(io::Error::new(
+        None => Ok(None),
+
+        Some(_) => Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "Unsupported WHERE expression",
         )),
     }
 }
 
-fn matches_comparison(actual: &str, operator: &ComparisonOperator, expected: &str) -> bool {
-    let ordering = actual.cmp(expected);
+fn matches_comparison(actual: &Value, operator: &ComparisonOperator, expected: &Value) -> bool {
+    let ordering = actual.compare(expected);
 
     match operator {
-        ComparisonOperator::Equal => ordering == Ordering::Equal,
-        ComparisonOperator::NotEqual => ordering != Ordering::Equal,
-        ComparisonOperator::LessThan => ordering == Ordering::Less,
-        ComparisonOperator::LessThanOrEqual => ordering != Ordering::Greater,
-        ComparisonOperator::GreaterThan => ordering == Ordering::Greater,
-        ComparisonOperator::GreaterThanOrEqual => ordering != Ordering::Less,
+        ComparisonOperator::Equal => actual == expected,
+        ComparisonOperator::NotEqual => actual != expected,
+        ComparisonOperator::LessThan => ordering == Some(Ordering::Less),
+        ComparisonOperator::LessThanOrEqual => {
+            matches!(ordering, Some(Ordering::Less | Ordering::Equal))
+        }
+        ComparisonOperator::GreaterThan => ordering == Some(Ordering::Greater),
+        ComparisonOperator::GreaterThanOrEqual => {
+            matches!(ordering, Some(Ordering::Greater | Ordering::Equal))
+        }
     }
 }

@@ -185,6 +185,8 @@ impl Database {
         let rootpage = self.table_rootpage(table_name)?;
         self.page_cells(rootpage)
     }
+
+    #[allow(dead_code)]
     pub fn table_column_values(
         &mut self,
         table_name: &str,

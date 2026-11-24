@@ -1,12 +1,14 @@
 use std::io::{self, Read};
 
+use crate::sql::ast::Literal;
+
 #[allow(dead_code)]
 pub struct Cell {
     pub payload_size: u64,
     pub rowid: u64,
     pub record: Record,
 }
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 #[allow(dead_code)]
 pub enum Value {
     Null,
@@ -24,6 +26,63 @@ impl std::fmt::Display for Value {
             Value::Float(value) => write!(f, "{value}"),
             Value::Text(value) => write!(f, "{value}"),
             Value::Blob(value) => write!(f, "{value:?}"),
+        }
+    }
+}
+impl TryFrom<Literal> for Value {
+    type Error = String;
+
+    fn try_from(literal: Literal) -> Result<Self, Self::Error> {
+        match literal {
+            Literal::String(value) => Ok(Value::Text(value)),
+
+            Literal::Number(value) => {
+                if let Ok(integer) = value.parse::<i64>() {
+                    Ok(Value::Integer(integer))
+                } else if let Ok(float) = value.parse::<f64>() {
+                    Ok(Value::Float(float))
+                } else {
+                    Err(format!("Invalid numeric literal: {value}"))
+                }
+            }
+
+            Literal::Null => Ok(Value::Null),
+        }
+    }
+}
+use std::cmp::Ordering;
+
+impl Value {
+    pub fn compare(&self, other: &Self) -> Option<Ordering> {
+        match (self, other) {
+            (Value::Null, Value::Null) => Some(Ordering::Equal),
+
+            (Value::Null, _) => Some(Ordering::Less),
+            (_, Value::Null) => Some(Ordering::Greater),
+
+            (Value::Integer(a), Value::Integer(b)) => Some(a.cmp(b)),
+
+            (Value::Float(a), Value::Float(b)) => a.partial_cmp(b),
+
+            (Value::Integer(a), Value::Float(b)) => (*a as f64).partial_cmp(b),
+
+            (Value::Float(a), Value::Integer(b)) => a.partial_cmp(&(*b as f64)),
+
+            (Value::Text(a), Value::Text(b)) => Some(a.cmp(b)),
+
+            (Value::Blob(a), Value::Blob(b)) => Some(a.cmp(b)),
+
+            (Value::Integer(_) | Value::Float(_), Value::Text(_) | Value::Blob(_)) => {
+                Some(Ordering::Less)
+            }
+
+            (Value::Text(_) | Value::Blob(_), Value::Integer(_) | Value::Float(_)) => {
+                Some(Ordering::Greater)
+            }
+
+            (Value::Text(_), Value::Blob(_)) => Some(Ordering::Less),
+
+            (Value::Blob(_), Value::Text(_)) => Some(Ordering::Greater),
         }
     }
 }
