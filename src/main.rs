@@ -10,6 +10,7 @@ use crate::sql::parse_sql;
 use anyhow::{Result, bail};
 
 mod database;
+mod page;
 mod record;
 mod sql;
 

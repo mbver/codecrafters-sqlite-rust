@@ -1,112 +1,34 @@
 use std::{
     fs::File,
-    io::{self, BufReader, Read, Seek, SeekFrom},
+    io::{self, Read, Seek, SeekFrom},
 };
 
-use crate::record::{Cell, SchemaRecord, Value, read_cell};
+use crate::{
+    page::{Page, PageKind, RawPage},
+    record::{Cell, SchemaRecord},
+};
 
 pub struct Database {
-    reader: BufReader<File>,
+    reader: File,
+    pub page_size: u32,
 }
 
 impl Database {
     pub fn open(path: &str) -> io::Result<Self> {
         let file = File::open(path)?;
-
-        Ok(Self {
-            reader: BufReader::new(file),
-        })
-    }
-
-    pub fn page_size(&mut self) -> io::Result<u16> {
-        self.reader.seek(SeekFrom::Start(16))?;
-
-        let mut buffer = [0u8; 2];
-        self.reader.read_exact(&mut buffer)?;
-
-        Ok(u16::from_be_bytes(buffer))
+        let mut reader = file;
+        reader.seek(SeekFrom::Start(16))?;
+        let mut buf = [0u8; 2];
+        reader.read_exact(&mut buf)?;
+        let raw = u16::from_be_bytes(buf);
+        let page_size = if raw == 1 { 65536 } else { raw as u32 };
+        Ok(Self { reader, page_size })
     }
 
     pub fn table_count(&mut self) -> io::Result<u16> {
-        self.reader.seek(SeekFrom::Start(103))?;
-
-        let mut buffer = [0u8; 2];
-        self.reader.read_exact(&mut buffer)?;
-
-        Ok(u16::from_be_bytes(buffer))
+        Ok(self.load_page(1)?.header.cell_count)
     }
-    pub fn page_cell_count(&mut self, page_number: u32) -> io::Result<u16> {
-        let page_size = self.page_size()? as u64;
-        let page_offset = (page_number as u64 - 1) * page_size;
 
-        let header_offset = if page_number == 1 {
-            page_offset + 100
-        } else {
-            page_offset
-        };
-
-        self.reader.seek(SeekFrom::Start(header_offset))?;
-
-        let mut page_header = [0u8; 8];
-        self.reader.read_exact(&mut page_header)?;
-
-        Ok(u16::from_be_bytes([page_header[3], page_header[4]]))
-    }
-    pub fn page_cell_pointers(
-        &mut self,
-        page_number: u32,
-        cell_count: u16,
-    ) -> io::Result<Vec<usize>> {
-        let page_size = self.page_size()? as u64;
-        let page_offset = (page_number as u64 - 1) * page_size;
-
-        let header_offset = if page_number == 1 {
-            page_offset + 100
-        } else {
-            page_offset
-        };
-
-        let pointer_offset = header_offset + 8;
-
-        self.reader.seek(SeekFrom::Start(pointer_offset))?;
-
-        let mut pointers = Vec::with_capacity(cell_count as usize);
-
-        for _ in 0..cell_count {
-            let mut buffer = [0u8; 2];
-            self.reader.read_exact(&mut buffer)?;
-
-            let pointer = u16::from_be_bytes(buffer);
-            pointers.push(pointer as usize);
-        }
-
-        Ok(pointers)
-    }
-    pub fn page_cells(&mut self, page_number: u32) -> io::Result<Vec<Cell>> {
-        if page_number == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Invalid page number",
-            ));
-        }
-
-        let cell_count = self.page_cell_count(page_number)?;
-        let pointers = self.page_cell_pointers(page_number, cell_count)?;
-
-        let page_size = self.page_size()? as u64;
-        let page_offset = (page_number as u64 - 1) * page_size;
-
-        let mut cells = Vec::with_capacity(cell_count as usize);
-
-        for pointer in pointers {
-            let cell_offset = page_offset + pointer as u64;
-
-            self.reader.seek(SeekFrom::Start(cell_offset))?;
-            cells.push(read_cell(&mut self.reader)?);
-        }
-
-        Ok(cells)
-    }
     pub fn schema_cells(&mut self) -> io::Result<Vec<Cell>> {
         self.page_cells(1)
     }
@@ -121,10 +43,6 @@ impl Database {
         }
 
         Ok(names)
-    }
-    pub fn table_row_count(&mut self, table_name: &str) -> io::Result<u16> {
-        let rootpage = self.table_rootpage(table_name)?;
-        self.page_cell_count(rootpage)
     }
     pub fn table_schema(&mut self, table_name: &str) -> io::Result<SchemaRecord> {
         let cells = self.schema_cells()?;
@@ -181,48 +99,94 @@ impl Database {
             ),
         ))
     }
-    pub fn table_cells(&mut self, table_name: &str) -> io::Result<Vec<Cell>> {
-        let rootpage = self.table_rootpage(table_name)?;
-        self.page_cells(rootpage)
+
+    pub fn scan_table<F>(&mut self, table_name: &str, predicate: F) -> io::Result<TableScan<'_, F>>
+    where
+        F: FnMut(&Cell) -> io::Result<bool>,
+    {
+        let root = self.table_rootpage(table_name)?;
+        Ok(TableScan {
+            db: self,
+            stack: vec![root],
+            predicate,
+        })
     }
 
-    #[allow(dead_code)]
-    pub fn table_column_values(
-        &mut self,
-        table_name: &str,
-        column_names: &[&str],
-    ) -> io::Result<Vec<Vec<Value>>> {
-        let column_indices = column_names
-            .iter()
-            .map(|name| self.table_column_index(table_name, name))
-            .collect::<io::Result<Vec<_>>>()?; // collect Result<X> into Result<Vec<X>>
-
-        let cells = self.table_cells(table_name)?;
-
-        let mut rows = Vec::with_capacity(cells.len());
-
-        for cell in cells {
-            let mut values = Vec::with_capacity(column_indices.len());
-
-            for &column_index in &column_indices {
-                let value = cell
-                    .record
-                    .values
-                    .get(column_index)
-                    .cloned()
-                    .ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("Column index {} is missing from record", column_index),
-                        )
-                    })?;
-
-                values.push(value);
+    pub fn table_row_count(&mut self, table_name: &str) -> io::Result<u64> {
+        let mut stack = vec![self.table_rootpage(table_name)?];
+        let mut rows = 0u64;
+        while let Some(page_number) = stack.pop() {
+            let page = self.load_page(page_number)?;
+            match page.header.kind {
+                PageKind::LeafTable => rows += page.header.cell_count as u64,
+                PageKind::InteriorTable => stack.extend(page.children()?),
+                kind => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Unsupported page kind: {kind:?}"),
+                    ));
+                }
             }
-
-            rows.push(values);
         }
-
         Ok(rows)
+    }
+
+    fn load_page(&mut self, page_number: u32) -> io::Result<RawPage> {
+        if page_number == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Invalid page number",
+            ));
+        }
+        self.reader.seek(SeekFrom::Start(
+            (page_number as u64 - 1) * self.page_size as u64,
+        ))?;
+        let mut bytes = vec![0u8; self.page_size as usize];
+        self.reader.read_exact(&mut bytes)?;
+        RawPage::parse(bytes, page_number)
+    }
+
+    pub fn page_cells(&mut self, page_number: u32) -> io::Result<Vec<Cell>> {
+        self.load_page(page_number)?.leaf_cells()
+    }
+
+    fn read_page(&mut self, page_number: u32) -> io::Result<Page> {
+        let page = self.load_page(page_number)?;
+        match page.header.kind {
+            PageKind::LeafTable => Ok(Page::Leaf(page.leaf_cells()?)),
+            PageKind::InteriorTable => Ok(Page::Interior(page.children()?)),
+            kind => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unsupported page kind: {kind:?}"),
+            )),
+        }
+    }
+}
+
+pub struct TableScan<'a, F> {
+    db: &'a mut Database,
+    stack: Vec<u32>,
+    predicate: F,
+}
+
+impl<F: FnMut(&Cell) -> io::Result<bool>> TableScan<'_, F> {
+    /// Advances to the next leaf and returns its matching cells (possibly empty);
+    /// `None` once the tree is exhausted.
+    pub fn leaf_page_cells(&mut self) -> io::Result<Option<Vec<Cell>>> {
+        while let Some(page) = self.stack.pop() {
+            match self.db.read_page(page)? {
+                Page::Leaf(cells) => {
+                    let mut matched = Vec::with_capacity(cells.len());
+                    for cell in cells {
+                        if (self.predicate)(&cell)? {
+                            matched.push(cell);
+                        }
+                    }
+                    return Ok(Some(matched));
+                }
+                Page::Interior(children) => self.stack.extend(children.into_iter().rev()),
+            }
+        }
+        Ok(None)
     }
 }
