@@ -1,18 +1,21 @@
 use std::cmp::Ordering;
 use std::io;
+use std::sync::{Arc, Mutex};
 
 use crate::database::Database;
-use crate::record::Value;
+use crate::record::{Cell, Value};
 use crate::sql::ast::{
     ComparisonOperator, Expression, Operand, SelectColumns, SelectStatement, Statement,
 };
 use crate::sql::parse_sql;
+use crate::table::Table;
 use anyhow::{Result, bail};
 
 mod database;
 mod page;
 mod record;
 mod sql;
+mod table;
 
 type PreparedFilter = (usize, ComparisonOperator, Value);
 
@@ -24,17 +27,21 @@ fn main() -> Result<()> {
         2 => bail!("Missing <command>"),
         _ => {}
     }
-    let mut database = Database::open(&args[1])?;
 
     // Parse command and act accordingly
     let command = &args[2];
+    let database = Arc::new(Mutex::new(Database::open(&args[1])?));
+
     match command.as_str() {
         ".dbinfo" => {
-            println!("database page size: {}", database.page_size()?);
-            println!("number of tables: {}", database.table_count()?);
+            println!("database page size: {}", database.lock().unwrap().page_size);
+            println!(
+                "number of tables: {}",
+                database.lock().unwrap().table_count()
+            );
         }
         ".tables" => {
-            let table_names = database.table_names()?;
+            let table_names = database.lock().unwrap().table_names()?;
 
             for name in table_names {
                 print!("{name} ");
@@ -45,7 +52,7 @@ fn main() -> Result<()> {
         query => match parse_sql(query)? {
             Statement::CreateTable(_) => bail!("create table is unsupported"),
             Statement::Select(select) => {
-                execute_select(&mut database, select)?;
+                execute_select(database.clone(), select)?;
             }
         },
     }
@@ -53,74 +60,66 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn execute_select(database: &mut Database, select: SelectStatement) -> io::Result<()> {
-    let cells = database.table_cells(&select.table_name)?;
-
+fn execute_select(database: Arc<Mutex<Database>>, select: SelectStatement) -> io::Result<()> {
+    let table = Table::load(database.clone(), &select.table_name)?;
     // Resolve selected columns.
     let column_indices = match select.columns {
         SelectColumns::Count => {
-            println!("{}", database.table_row_count(&select.table_name)?);
+            println!("{}", table.row_count()?);
             return Ok(());
         }
 
-        SelectColumns::All => {
-            let column_count = cells
-                .first()
-                .map(|cell| cell.record.values.len())
-                .unwrap_or(0);
-
-            (0..column_count).collect()
-        }
+        SelectColumns::All => (0..table.column_count()).collect(),
         SelectColumns::Columns(column_names) => column_names
             .iter()
-            .map(|name| database.table_column_index(&select.table_name, name))
+            .map(|name| table.column_index(name))
             .collect::<io::Result<Vec<_>>>()?,
     };
 
-    // Resolve the WHERE column once, not for every record.
-    let filter = prepare_filter(database, &select.table_name, select.where_clause)?;
-    for cell in cells {
-        let record = &cell.record;
-
-        // Apply WHERE before projecting selected columns.
-        if let Some((column_index, operator, expected)) = &filter {
-            let actual = record.values.get(*column_index).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "WHERE column index out of bounds",
-                )
-            })?;
-
-            if !matches_comparison(&actual, operator, expected) {
-                continue;
+    let filter = prepare_filter(&table, select.where_clause)?;
+    let predicate = |cell: &Cell| -> io::Result<bool> {
+        match &filter {
+            None => Ok(true),
+            Some((column_index, operator, expected)) => {
+                let actual = cell.record.values.get(*column_index).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "WHERE column index out of bounds",
+                    )
+                })?;
+                Ok(matches_comparison(actual, operator, expected))
             }
         }
+    };
 
-        let values = column_indices
-            .iter()
-            .map(|&index| {
-                record
-                    .values
-                    .get(index)
-                    .map(|value| value.to_string())
-                    .ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "Selected column index out of bounds",
-                        )
-                    })
-            })
-            .collect::<io::Result<Vec<_>>>()?;
+    let mut scan = table.scan(predicate);
+    while let Some(cells) = scan.leaf_page_cells()? {
+        for cell in cells {
+            let values = column_indices
+                .iter()
+                .map(|&index| {
+                    cell.record
+                        .values
+                        .get(index)
+                        .map(|value| value.to_string())
+                        .ok_or_else(|| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "Selected column index out of bounds",
+                            )
+                        })
+                })
+                .collect::<io::Result<Vec<_>>>()?;
 
-        println!("{}", values.join("|"));
+            println!("{}", values.join("|"));
+            // projection + println only
+        }
     }
-
     Ok(())
 }
 
 fn prepare_filter(
-    database: &mut Database,
-    table_name: &str,
+    table: &Table,
     where_clause: Option<Expression>,
 ) -> io::Result<Option<PreparedFilter>> {
     match where_clause {
@@ -129,7 +128,7 @@ fn prepare_filter(
             operator,
             right: Operand::Literal(literal),
         }) => {
-            let column_index = database.table_column_index(table_name, &column_name)?;
+            let column_index = table.column_index(&column_name)?;
 
             let expected = Value::try_from(literal)
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
