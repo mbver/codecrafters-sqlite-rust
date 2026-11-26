@@ -65,7 +65,6 @@ impl Parser {
     }
 
     fn table_element(&mut self) -> Result<TableElement, String> {
-        println!("======== table element: {:?}", self.peek());
         match self.peek() {
             Token::Primary | Token::Unique => {
                 Ok(TableElement::TableConstraint(self.table_constraint()?))

@@ -19,12 +19,10 @@ pub struct Table {
 
 impl Table {
     pub fn load(database: Arc<Mutex<Database>>, table_name: &str) -> io::Result<Self> {
-        println!("============ loading table");
         let cells = {
             let mut db = database.lock().unwrap();
             db.schema_cells()?
         };
-        println!("============ schema cells");
         let mut schema_record = None;
         for cell in cells {
             let record = SchemaRecord::try_from(cell.record)?;
@@ -34,31 +32,26 @@ impl Table {
                 break;
             }
         }
-        println!("============ schema record");
         let Some(schema) = schema_record else {
             return Err(io::Error::from(io::ErrorKind::NotFound));
         };
         let sql = schema.sql.as_deref().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "Missing CREATE TABLE SQL")
         })?;
-        println!("============ sql : {sql}");
         let statement = crate::sql::parse_sql(sql)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        println!("============ statement");
         let crate::sql::ast::Statement::CreateTable(create_table) = statement else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Invalid create table statement",
             ));
         };
-        println!("============ create table stmt ");
         let mut column_definitions = Vec::new();
         for element in create_table.elements {
             if let crate::sql::ast::TableElement::ColumnDefinition(column) = element {
                 column_definitions.push(column);
             }
         }
-        println!("============ column def");
         Ok(Self {
             name: table_name.to_string(),
             database,
