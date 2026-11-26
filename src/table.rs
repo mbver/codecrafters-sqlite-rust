@@ -19,6 +19,7 @@ pub struct Table {
 
 impl Table {
     pub fn load(database: Arc<Mutex<Database>>, table_name: &str) -> io::Result<Self> {
+        println!("============ loading table");
         let cells = {
             let mut db = database.lock().unwrap();
             db.schema_cells()?
