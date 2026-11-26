@@ -91,7 +91,7 @@ pub fn parse_sql(sql: &str) -> io::Result<Statement> {
     let tokens = scanner
         .scan_tokens()
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
+    println!("============ tokens");
     let mut parser = Parser::new(tokens);
     parser
         .parse()

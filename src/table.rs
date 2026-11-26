@@ -41,7 +41,7 @@ impl Table {
         let sql = schema.sql.as_deref().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "Missing CREATE TABLE SQL")
         })?;
-        println!("============ sql ");
+        println!("============ sql : {sql}");
         let statement = crate::sql::parse_sql(sql)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         println!("============ statement");
