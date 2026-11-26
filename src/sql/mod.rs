@@ -3,6 +3,7 @@
  *
  * statement :=
  *     create_table_stmt
+ *   | create_index_stmt
  *   | select_stmt
  *   | insert_stmt
  *
@@ -76,6 +77,7 @@
  *   | NULL
  */
 pub mod ast;
+pub mod index;
 pub mod parser;
 pub mod scanner;
 pub mod token;
@@ -132,5 +134,19 @@ mod tests {
         let statement = parse_sql(source).unwrap();
 
         println!("{:#?}", statement);
+    }
+    #[test]
+    fn parse_create_index() {
+        use crate::sql::ast::Statement;
+
+        let source = "CREATE INDEX idx_companies_country on companies (country)";
+        match parse_sql(source).unwrap() {
+            Statement::CreateIndex(ci) => {
+                assert_eq!(ci.name, "idx_companies_country");
+                assert_eq!(ci.table_name, "companies");
+                assert_eq!(ci.columns, vec!["country"]);
+            }
+            other => panic!("unexpected statement: {other:?}"),
+        }
     }
 }

@@ -50,7 +50,9 @@ fn main() -> Result<()> {
             println!();
         }
         query => match parse_sql(query)? {
-            Statement::CreateTable(_) => bail!("create table is unsupported"),
+            Statement::CreateTable(_) | Statement::CreateIndex(_) => {
+                bail!("create statements are unsupported")
+            }
             Statement::Select(select) => {
                 execute_select(database.clone(), select)?;
             }
@@ -77,6 +79,20 @@ fn execute_select(database: Arc<Mutex<Database>>, select: SelectStatement) -> io
     };
 
     let filter = prepare_filter(&table, select.where_clause)?;
+
+    let indexed = match &filter {
+        Some((column_index, ComparisonOperator::Equal, key)) => {
+            table.index_for(*column_index).map(|index| (index, key))
+        }
+        _ => None,
+    };
+
+    if let Some((index, key)) = indexed {
+        for cell in table.scan_index(index, key)? {
+            print_row(&cell, &column_indices, table.rowid_column_index())?;
+        }
+        return Ok(());
+    }
 
     let predicate = |cell: &Cell| -> io::Result<bool> {
         match &filter {
@@ -173,4 +189,29 @@ fn matches_comparison(actual: &Value, operator: &ComparisonOperator, expected: &
             matches!(ordering, Some(Ordering::Greater | Ordering::Equal))
         }
     }
+}
+
+fn print_row(cell: &Cell, column_indices: &[usize], rowid_col: Option<usize>) -> io::Result<()> {
+    let values = column_indices
+        .iter()
+        .map(|&index| {
+            if rowid_col == Some(index) {
+                Ok(cell.row_id.to_string())
+            } else {
+                cell.record
+                    .values
+                    .get(index)
+                    .map(|value| value.to_string())
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Selected column index out of bounds",
+                        )
+                    })
+            }
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+
+    println!("{}", values.join("|"));
+    Ok(())
 }

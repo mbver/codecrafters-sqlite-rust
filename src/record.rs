@@ -159,7 +159,7 @@ pub struct SchemaRecord {
     pub sql: Option<String>,
 }
 
-fn read_varint(data: &[u8], offset: &mut usize) -> io::Result<u64> {
+pub fn read_varint(data: &[u8], offset: &mut usize) -> io::Result<u64> {
     let mut value = 0u64;
 
     for _ in 0..8 {
@@ -220,7 +220,7 @@ pub fn read_cell(reader: &mut impl Read) -> io::Result<Cell> {
         record,
     })
 }
-fn read_record(data: &[u8]) -> io::Result<Record> {
+pub fn read_record(data: &[u8]) -> io::Result<Record> {
     let mut offset = 0;
 
     let header_size = read_varint(data, &mut offset)? as usize;

@@ -1,6 +1,7 @@
 #[derive(Debug)]
 pub enum Statement {
     CreateTable(CreateTable),
+    CreateIndex(CreateIndex), // new
     Select(SelectStatement),
     // Insert(Insert),
 }
@@ -10,6 +11,14 @@ pub enum Statement {
 pub struct CreateTable {
     pub table_name: String,
     pub elements: Vec<TableElement>,
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+pub struct CreateIndex {
+    pub name: String,
+    pub table_name: String,
+    pub columns: Vec<String>,
 }
 
 #[derive(Debug)]

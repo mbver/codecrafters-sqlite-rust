@@ -1,3 +1,5 @@
+use crate::sql::ast::CreateIndex;
+
 use super::ast::{
     ColumnConstraint, ColumnDefinition, ComparisonOperator, CreateTable, Expression, Literal,
     Operand, SelectColumns, SelectStatement, Statement, TableConstraint, TableElement,
@@ -29,6 +31,7 @@ impl Parser {
     fn statement(&mut self) -> Result<Statement, String> {
         match self.peek() {
             Token::Create => Ok(Statement::CreateTable(self.create_table_stmt()?)),
+            Token::Index | Token::Unique => Ok(Statement::CreateIndex(self.create_index_stmt()?)),
             Token::Select => Ok(Statement::Select(self.select_stmt()?)),
             _ => Err(format!("Unexpected token: {:?}", self.peek())),
         }
@@ -61,6 +64,38 @@ impl Parser {
         Ok(CreateTable {
             table_name,
             elements,
+        })
+    }
+
+    fn create_index_stmt(&mut self) -> Result<CreateIndex, String> {
+        self.consume(&Token::Create, "Expected CREATE")?;
+
+        // Optional UNIQUE (irrelevant for reading).
+        if self.matches(&Token::Unique) {
+            self.advance();
+        }
+
+        self.consume(&Token::Index, "Expected INDEX")?;
+
+        // Optional IF NOT EXISTS.
+        if self.matches(&Token::If) {
+            self.advance();
+            self.consume(&Token::Not, "Expected NOT after IF")?;
+            self.consume(&Token::Exists, "Expected EXISTS after IF NOT")?;
+        }
+
+        let name = self.identifier()?;
+        self.consume(&Token::On, "Expected ON after index name")?;
+        let table_name = self.identifier()?;
+
+        self.consume(&Token::LeftParen, "Expected '(' after table name")?;
+        let columns = self.identifier_list()?;
+        self.consume(&Token::RightParen, "Expected ')' after index columns")?;
+
+        Ok(CreateIndex {
+            name,
+            table_name,
+            columns,
         })
     }
 

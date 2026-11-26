@@ -100,6 +100,8 @@ impl Scanner {
             "NOT" => Token::Not,
             "NULL" => Token::Null,
             "UNIQUE" => Token::Unique,
+            "INDEX" => Token::Index,
+            "ON" => Token::On,
             "AUTOINCREMENT" => Token::Autoincrement,
             "SELECT" => Token::Select,
             "FROM" => Token::From,

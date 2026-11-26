@@ -1,6 +1,6 @@
 use std::io;
 
-use crate::record::{Cell, read_cell};
+use crate::record::{Cell, Value, read_cell, read_record, read_varint};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PageKind {
@@ -118,9 +118,66 @@ impl RawPage {
         })?);
         Ok(children)
     }
+    pub fn index_cells(&self) -> io::Result<Vec<IndexCell>> {
+        let interior = match self.header.kind {
+            PageKind::InteriorIndex => true,
+            PageKind::LeafIndex => false,
+            _ => return Err(invalid("Expected an index page")),
+        };
+        self.cell_pointers()?
+            .into_iter()
+            .map(|p| {
+                let mut offset = p;
+                let left_child = if interior {
+                    let b = self
+                        .bytes
+                        .get(offset..offset + 4)
+                        .ok_or_else(|| invalid("Short index cell"))?;
+                    offset += 4;
+                    Some(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+                } else {
+                    None
+                };
+                let size = read_varint(&self.bytes, &mut offset)? as usize;
+                let payload = self
+                    .bytes
+                    .get(offset..offset + size)
+                    .ok_or_else(|| invalid("Index payload out of bounds"))?;
+                Ok(IndexCell {
+                    left_child,
+                    values: read_record(payload)?.values,
+                })
+            })
+            .collect()
+    }
+
+    /// (left child, key) per cell. Left child holds rowids <= key.
+    pub fn table_interior_cells(&self) -> io::Result<Vec<(u32, i64)>> {
+        self.cell_pointers()?
+            .into_iter()
+            .map(|p| {
+                let b = self
+                    .bytes
+                    .get(p..p + 4)
+                    .ok_or_else(|| invalid("Short interior cell"))?;
+                let child = u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
+                let mut offset = p + 4;
+                Ok((child, read_varint(&self.bytes, &mut offset)? as i64))
+            })
+            .collect()
+    }
 }
 
 pub enum Page {
     Leaf(Vec<Cell>),
     Interior(Vec<u32>), // children in key order, right-most last
+}
+
+pub struct IndexCell {
+    pub left_child: Option<u32>, // Some on interior pages
+    pub values: Vec<Value>,      // indexed columns..., rowid last
+}
+
+fn invalid(msg: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, msg.to_string())
 }

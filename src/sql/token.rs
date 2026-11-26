@@ -11,6 +11,8 @@ pub enum Token {
     Null,
     Unique,
     Autoincrement,
+    Index,
+    On,
     // SELECT keywords
     Select,
     From,

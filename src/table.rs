@@ -6,8 +6,8 @@ use std::{
 use crate::{
     database::Database,
     page::{Page, PageKind},
-    record::{Cell, SchemaRecord},
-    sql::ast::ColumnDefinition,
+    record::{Cell, SchemaRecord, Value},
+    sql::{ast::ColumnDefinition, index::Index},
 };
 
 pub struct Table {
@@ -15,6 +15,7 @@ pub struct Table {
     database: Arc<Mutex<Database>>,
     schema: SchemaRecord,
     column_definitions: Vec<ColumnDefinition>,
+    indexes: Vec<Index>, // new
 }
 
 impl Table {
@@ -24,12 +25,16 @@ impl Table {
             db.schema_cells()?
         };
         let mut schema_record = None;
+        let mut indexes = Vec::new();
         for cell in cells {
             let record = SchemaRecord::try_from(cell.record)?;
 
             if record.record_type == "table" && record.name == table_name {
                 schema_record = Some(record);
-                break;
+            } else if record.record_type == "index" && record.tbl_name == table_name {
+                if let Some(index) = Index::from_schema(&record)? {
+                    indexes.push(index);
+                }
             }
         }
         let Some(schema) = schema_record else {
@@ -57,6 +62,7 @@ impl Table {
             database,
             schema,
             column_definitions,
+            indexes,
         })
     }
     pub fn root_page(&self) -> u32 {
@@ -112,6 +118,61 @@ impl Table {
             stack: vec![self.root_page()],
             predicate,
         }
+    }
+    pub fn index_for(&self, column_index: usize) -> Option<&Index> {
+        if self.rowid_column_index() == Some(column_index) {
+            return None;
+        }
+        let name = &self.column_definitions.get(column_index)?.name;
+        self.indexes
+            .iter()
+            .find(|index| index.leading_column() == Some(name.as_str()))
+    }
+
+    pub fn scan_index(&self, index: &Index, key: &Value) -> io::Result<Vec<Cell>> {
+        let mut db = self.database.lock().unwrap();
+        let rowids = index.lookup(&mut db, key)?;
+
+        let mut cells = Vec::with_capacity(rowids.len());
+        for rowid in rowids {
+            let mut page_no = self.root_page();
+            loop {
+                let page = db.load_page(page_no)?;
+                match page.header.kind {
+                    PageKind::InteriorTable => {
+                        // First cell whose key >= rowid; otherwise the right-most child.
+                        page_no = match page
+                            .table_interior_cells()?
+                            .into_iter()
+                            .find(|&(_, k)| rowid <= k)
+                        {
+                            Some((child, _)) => child,
+                            None => page.header.right_most.ok_or_else(|| {
+                                io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    "Interior page without right-most pointer",
+                                )
+                            })?,
+                        };
+                    }
+                    PageKind::LeafTable => {
+                        cells.extend(
+                            page.leaf_cells()?
+                                .into_iter()
+                                .find(|c| c.row_id as i64 == rowid),
+                        );
+                        break;
+                    }
+                    kind => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Unsupported page kind: {kind:?}"),
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(cells)
     }
 }
 
