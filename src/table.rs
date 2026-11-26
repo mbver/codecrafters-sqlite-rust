@@ -44,13 +44,14 @@ impl Table {
         println!("============ sql ");
         let statement = crate::sql::parse_sql(sql)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        println!("============ statement");
         let crate::sql::ast::Statement::CreateTable(create_table) = statement else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Invalid create table statement",
             ));
         };
-        println!("============ parse sql ");
+        println!("============ create table stmt ");
         let mut column_definitions = Vec::new();
         for element in create_table.elements {
             if let crate::sql::ast::TableElement::ColumnDefinition(column) = element {
