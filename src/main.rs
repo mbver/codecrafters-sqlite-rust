@@ -62,6 +62,7 @@ fn main() -> Result<()> {
 
 fn execute_select(database: Arc<Mutex<Database>>, select: SelectStatement) -> io::Result<()> {
     let table = Table::load(database.clone(), &select.table_name)?;
+    println!("======= load table");
     // Resolve selected columns.
     let column_indices = match select.columns {
         SelectColumns::Count => {
@@ -75,8 +76,11 @@ fn execute_select(database: Arc<Mutex<Database>>, select: SelectStatement) -> io
             .map(|name| table.column_index(name))
             .collect::<io::Result<Vec<_>>>()?,
     };
+    println!("======= get indices");
 
     let filter = prepare_filter(&table, select.where_clause)?;
+    println!("======= filter");
+
     let predicate = |cell: &Cell| -> io::Result<bool> {
         match &filter {
             None => Ok(true),
@@ -91,9 +95,11 @@ fn execute_select(database: Arc<Mutex<Database>>, select: SelectStatement) -> io
             }
         }
     };
+    println!("======= predicate");
 
     let mut scan = table.scan(predicate);
     while let Some(cells) = scan.leaf_page_cells()? {
+        println!("======= inside while");
         for cell in cells {
             let values = column_indices
                 .iter()

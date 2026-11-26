@@ -118,4 +118,12 @@ mod tests {
 
         println!("{:#?}", statement);
     }
+    #[test]
+    fn parse_select() {
+        let source = "SELECT id, name FROM superheroes WHERE eye_color = 'Gold Eyes'";
+
+        let statement = parse_sql(source).unwrap();
+
+        println!("{:#?}", statement);
+    }
 }
