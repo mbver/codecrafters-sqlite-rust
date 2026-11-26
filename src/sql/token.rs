@@ -10,7 +10,7 @@ pub enum Token {
     Not,
     Null,
     Unique,
-
+    Autoincrement,
     // SELECT keywords
     Select,
     From,

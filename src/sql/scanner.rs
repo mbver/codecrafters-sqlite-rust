@@ -72,7 +72,7 @@ impl Scanner {
             '\'' => self.scan_string(),
 
             'a'..='z' | 'A'..='Z' | '_' => self.scan_identifier(ch),
-
+            '"' => self.scan_quoted_identifier(),
             '0'..='9' => self.scan_number(ch),
 
             _ => Err(format!("Unexpected character: '{}'", ch)),
@@ -100,7 +100,7 @@ impl Scanner {
             "NOT" => Token::Not,
             "NULL" => Token::Null,
             "UNIQUE" => Token::Unique,
-
+            "AUTOINCREMENT" => Token::Autoincrement,
             "SELECT" => Token::Select,
             "FROM" => Token::From,
             "WHERE" => Token::Where,
@@ -110,7 +110,20 @@ impl Scanner {
 
         Ok(token)
     }
+    fn scan_quoted_identifier(&mut self) -> Result<Token, String> {
+        let mut identifier = String::new();
 
+        while let Some(ch) = self.peek() {
+            if ch == '"' {
+                self.advance();
+                return Ok(Token::Identifier(identifier));
+            }
+
+            identifier.push(self.advance());
+        }
+
+        Err("Unterminated quoted identifier".to_string())
+    }
     fn scan_number(&mut self, first: char) -> Result<Token, String> {
         let mut number = String::from(first);
 

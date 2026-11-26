@@ -31,6 +31,7 @@ pub enum ColumnConstraint {
     PrimaryKey,
     NotNull,
     Unique,
+    AutoIncrement,
     // Check(Expression),
     // Default(Expression),
     // References(References),

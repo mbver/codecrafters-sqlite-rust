@@ -119,6 +119,14 @@ mod tests {
         println!("{:#?}", statement);
     }
     #[test]
+    fn parse_create_table_superheroes() {
+        let source = "CREATE TABLE \"superheroes\" (id integer primary key autoincrement, name text not null, eye_color text, hair_color text, appearance_count integer, first_appearance text, first_appearance_year text)";
+
+        let statement = parse_sql(source).unwrap();
+
+        println!("{:#?}", statement);
+    }
+    #[test]
     fn parse_select() {
         let source = "SELECT id, name FROM superheroes WHERE eye_color = 'Gold Eyes'";
 

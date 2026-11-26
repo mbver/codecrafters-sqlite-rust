@@ -65,6 +65,7 @@ impl Parser {
     }
 
     fn table_element(&mut self) -> Result<TableElement, String> {
+        println!("======== table element: {:?}", self.peek());
         match self.peek() {
             Token::Primary | Token::Unique => {
                 Ok(TableElement::TableConstraint(self.table_constraint()?))
@@ -89,7 +90,10 @@ impl Parser {
 
         let mut constraints = Vec::new();
 
-        while matches!(self.peek(), Token::Primary | Token::Not | Token::Unique) {
+        while matches!(
+            self.peek(),
+            Token::Primary | Token::Not | Token::Unique | Token::Autoincrement
+        ) {
             constraints.push(self.column_constraint()?);
         }
 
@@ -140,6 +144,10 @@ impl Parser {
             Token::Unique => {
                 self.advance();
                 Ok(ColumnConstraint::Unique)
+            }
+            Token::Autoincrement => {
+                self.advance();
+                Ok(ColumnConstraint::AutoIncrement)
             }
             _ => Err(format!(
                 "Expected column constraint, found {:?}",
