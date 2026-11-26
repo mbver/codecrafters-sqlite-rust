@@ -30,8 +30,10 @@ impl Parser {
 
     fn statement(&mut self) -> Result<Statement, String> {
         match self.peek() {
+            Token::Create if matches!(self.tokens.get(self.current + 1), Some(Token::Index)) => {
+                Ok(Statement::CreateIndex(self.create_index_stmt()?))
+            }
             Token::Create => Ok(Statement::CreateTable(self.create_table_stmt()?)),
-            Token::Index | Token::Unique => Ok(Statement::CreateIndex(self.create_index_stmt()?)),
             Token::Select => Ok(Statement::Select(self.select_stmt()?)),
             _ => Err(format!("Unexpected token: {:?}", self.peek())),
         }
