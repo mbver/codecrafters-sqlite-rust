@@ -26,15 +26,29 @@ pub struct ColumnDefinition {
     pub data_type: Option<String>,
     pub constraints: Vec<ColumnConstraint>,
 }
+
+impl ColumnDefinition {
+    pub fn is_rowid_alias(&self) -> bool {
+        let has_pk = self
+            .constraints
+            .iter()
+            .any(|c| matches!(c, ColumnConstraint::PrimaryKey));
+        let is_integer = self
+            .data_type
+            .as_deref()
+            .map(|t| t.eq_ignore_ascii_case("integer"))
+            .unwrap_or(false);
+
+        has_pk && is_integer
+    }
+}
+
 #[derive(Debug)]
 pub enum ColumnConstraint {
     PrimaryKey,
     NotNull,
     Unique,
     AutoIncrement,
-    // Check(Expression),
-    // Default(Expression),
-    // References(References),
 }
 
 #[derive(Debug)]

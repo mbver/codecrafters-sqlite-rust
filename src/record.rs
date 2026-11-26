@@ -5,7 +5,7 @@ use crate::sql::ast::Literal;
 #[allow(dead_code)]
 pub struct Cell {
     pub payload_size: u64,
-    pub rowid: u64,
+    pub row_id: u64,
     pub record: Record,
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -207,7 +207,7 @@ pub fn read_varint_from_reader(reader: &mut impl Read) -> io::Result<u64> {
 
 pub fn read_cell(reader: &mut impl Read) -> io::Result<Cell> {
     let payload_size = read_varint_from_reader(reader)?;
-    let rowid = read_varint_from_reader(reader)?;
+    let row_id = read_varint_from_reader(reader)?;
 
     let mut payload = vec![0u8; payload_size as usize];
     reader.read_exact(&mut payload)?;
@@ -216,7 +216,7 @@ pub fn read_cell(reader: &mut impl Read) -> io::Result<Cell> {
 
     Ok(Cell {
         payload_size,
-        rowid,
+        row_id,
         record,
     })
 }

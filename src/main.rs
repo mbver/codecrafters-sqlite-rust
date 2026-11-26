@@ -82,37 +82,50 @@ fn execute_select(database: Arc<Mutex<Database>>, select: SelectStatement) -> io
         match &filter {
             None => Ok(true),
             Some((column_index, operator, expected)) => {
-                let actual = cell.record.values.get(*column_index).ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "WHERE column index out of bounds",
-                    )
-                })?;
-                Ok(matches_comparison(actual, operator, expected))
+                let actual = if table.rowid_column_index() == Some(*column_index) {
+                    Value::Integer(cell.row_id as i64) // use your record value enum variant
+                } else {
+                    cell.record
+                        .values
+                        .get(*column_index)
+                        .ok_or_else(|| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "WHERE column index out of bounds",
+                            )
+                        })?
+                        .clone()
+                };
+                Ok(matches_comparison(&actual, operator, expected))
             }
         }
     };
     let mut scan = table.scan(predicate);
+    let rowid_col = table.rowid_column_index();
+
     while let Some(cells) = scan.leaf_page_cells()? {
         for cell in cells {
             let values = column_indices
                 .iter()
                 .map(|&index| {
-                    cell.record
-                        .values
-                        .get(index)
-                        .map(|value| value.to_string())
-                        .ok_or_else(|| {
-                            io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "Selected column index out of bounds",
-                            )
-                        })
+                    if rowid_col == Some(index) {
+                        Ok(cell.row_id.to_string())
+                    } else {
+                        cell.record
+                            .values
+                            .get(index)
+                            .map(|value| value.to_string())
+                            .ok_or_else(|| {
+                                io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    "Selected column index out of bounds",
+                                )
+                            })
+                    }
                 })
                 .collect::<io::Result<Vec<_>>>()?;
 
             println!("{}", values.join("|"));
-            // projection + println only
         }
     }
     Ok(())

@@ -88,12 +88,54 @@ impl Parser {
         };
 
         let mut constraints = Vec::new();
+        let mut has_primary_key = false;
+        let mut has_not_null = false;
+        let mut has_unique = false;
+        let mut has_autoincrement = false;
 
         while matches!(
             self.peek(),
             Token::Primary | Token::Not | Token::Unique | Token::Autoincrement
         ) {
-            constraints.push(self.column_constraint()?);
+            let constraint = self.column_constraint()?;
+
+            match constraint {
+                ColumnConstraint::PrimaryKey => {
+                    if has_primary_key {
+                        return Err(format!(
+                            "Duplicate PRIMARY KEY constraint on column '{name}'"
+                        ));
+                    }
+                    has_primary_key = true;
+                }
+                ColumnConstraint::NotNull => {
+                    if has_not_null {
+                        return Err(format!("Duplicate NOT NULL constraint on column '{name}'"));
+                    }
+                    has_not_null = true;
+                }
+                ColumnConstraint::Unique => {
+                    if has_unique {
+                        return Err(format!("Duplicate UNIQUE constraint on column '{name}'"));
+                    }
+                    has_unique = true;
+                }
+                ColumnConstraint::AutoIncrement => {
+                    if has_autoincrement {
+                        return Err(format!(
+                            "Duplicate AUTOINCREMENT constraint on column '{name}'"
+                        ));
+                    }
+                    if !has_primary_key {
+                        return Err(format!(
+                            "AUTOINCREMENT requires PRIMARY KEY on column '{name}'"
+                        ));
+                    }
+                    has_autoincrement = true;
+                }
+            }
+
+            constraints.push(constraint);
         }
 
         Ok(ColumnDefinition {

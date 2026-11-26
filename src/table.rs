@@ -76,6 +76,11 @@ impl Table {
             ),
         ))
     }
+    pub fn rowid_column_index(&self) -> Option<usize> {
+        self.column_definitions
+            .iter()
+            .position(|col| col.is_rowid_alias())
+    }
     pub fn column_count(&self) -> usize {
         self.column_definitions.len()
     }
