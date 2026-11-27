@@ -133,6 +133,8 @@ impl Table {
             .find(|index| index.leading_column() == Some(name.as_str()))
     }
 
+    // scan the whole index to retrieve matching row_ids and find the cells for those row_ids
+    // run in 1 pass instead of multiple scans like TableScan so it doesn't need a separate struct
     pub fn scan_index(&self, index: &Index, key: &Value) -> io::Result<Vec<Cell>> {
         let mut db = self.database.lock().unwrap();
         let rowids = index.lookup(&mut db, key)?;
@@ -143,8 +145,10 @@ impl Table {
             loop {
                 let page = db.load_page(page_no)?;
                 match page.header.kind {
+                    // navigate down to the leaf-page that contains row_id
+                    // the first interior cell that has key >= row_id will lead to that leaf-page
+                    // continue the loop: load the child page and check it
                     PageKind::InteriorTable => {
-                        // First cell whose key >= rowid; otherwise the right-most child.
                         page_no = match page
                             .table_interior_cells()?
                             .into_iter()
@@ -159,6 +163,7 @@ impl Table {
                             })?,
                         };
                     }
+                    // leaf page found, find the cell and return
                     PageKind::LeafTable => {
                         cells.extend(
                             page.leaf_cells()?

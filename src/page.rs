@@ -156,7 +156,9 @@ impl RawPage {
             .collect()
     }
 
-    /// (left child, key) per cell. Left child holds rowids <= key.
+    // each interior cell hold left_child that points to another page at the next level
+    // only the last interior cell in a level also holds a right_child.
+    // table interior cell doesn't hold real data, unlike index interior cell which holds actual row_id
     pub fn table_interior_cells(&self) -> io::Result<Vec<(u32, i64)>> {
         self.cell_pointers()?
             .into_iter()
@@ -184,11 +186,15 @@ pub struct IndexCell {
 }
 
 impl IndexCell {
-    pub fn compare(&self, key: &Value) -> io::Result<Ordering> {
+    pub fn key(&self) -> io::Result<&Value> {
         self.values
             .first()
-            .and_then(|v| v.compare(key))
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Incomparable index key"))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing index key"))
+    }
+    pub fn compare(&self, key: &Value) -> io::Result<Ordering> {
+        self.key()?
+            .compare(key)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Incomparable values"))
     }
     pub fn row_id(&self) -> io::Result<i64> {
         match self.values.last() {
