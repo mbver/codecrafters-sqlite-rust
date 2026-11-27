@@ -80,24 +80,28 @@ fn execute_select(database: Arc<Mutex<Database>>, select: SelectStatement) -> io
 
     let filter = prepare_filter(&table, select.where_clause)?;
 
+    // check if any index in the table match the where_clause column
     let indexed = match &filter {
-        Some((column_index, ComparisonOperator::Equal, key)) => {
-            table.index_for(*column_index).map(|index| (index, key))
+        Some((column_index, ComparisonOperator::Equal, expected)) => {
+            table
+                .index_for(*column_index)
+                .map(|index| (index, expected)) // carry expected value with index
         }
         _ => None,
     };
-
-    if let Some((index, key)) = indexed {
-        for cell in table.scan_index(index, key)? {
+    // if there's a matching index, use index scan instead of table search
+    if let Some((index, expected)) = indexed {
+        for cell in table.scan_index(index, expected)? {
             print_row(&cell, &column_indices, table.rowid_column_index())?;
         }
         return Ok(());
     }
-
+    // full table scan with a predicate
     let predicate = |cell: &Cell| -> io::Result<bool> {
         match &filter {
             None => Ok(true),
             Some((column_index, operator, expected)) => {
+                // if the column is an alias to row_id, use row_id
                 let actual = if table.rowid_column_index() == Some(*column_index) {
                     Value::Integer(cell.row_id as i64) // use your record value enum variant
                 } else {
@@ -117,31 +121,9 @@ fn execute_select(database: Arc<Mutex<Database>>, select: SelectStatement) -> io
         }
     };
     let mut scan = table.scan(predicate);
-    let rowid_col = table.rowid_column_index();
-
     while let Some(cells) = scan.leaf_page_cells()? {
         for cell in cells {
-            let values = column_indices
-                .iter()
-                .map(|&index| {
-                    if rowid_col == Some(index) {
-                        Ok(cell.row_id.to_string())
-                    } else {
-                        cell.record
-                            .values
-                            .get(index)
-                            .map(|value| value.to_string())
-                            .ok_or_else(|| {
-                                io::Error::new(
-                                    io::ErrorKind::InvalidData,
-                                    "Selected column index out of bounds",
-                                )
-                            })
-                    }
-                })
-                .collect::<io::Result<Vec<_>>>()?;
-
-            println!("{}", values.join("|"));
+            print_row(&cell, &column_indices, table.rowid_column_index())?;
         }
     }
     Ok(())

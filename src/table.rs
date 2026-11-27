@@ -82,6 +82,8 @@ impl Table {
             ),
         ))
     }
+    // if a column is an alias to row_id, its value is stored as NULL
+    // and must be replaced by row_id in printing
     pub fn rowid_column_index(&self) -> Option<usize> {
         self.column_definitions
             .iter()
@@ -119,7 +121,9 @@ impl Table {
             predicate,
         }
     }
+    // check if any index in the table match the where_clause column
     pub fn index_for(&self, column_index: usize) -> Option<&Index> {
+        // if the column is alias to row_id, fallback to table scan
         if self.rowid_column_index() == Some(column_index) {
             return None;
         }

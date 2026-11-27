@@ -37,6 +37,9 @@ pub struct ColumnDefinition {
 }
 
 impl ColumnDefinition {
+    // column declared with id PRIMARY INTEGER KEY is an alias to row_id
+    // it will hold NULL in that position
+    // when its value is accessed, it will refer to cell's row_id
     pub fn is_rowid_alias(&self) -> bool {
         let has_pk = self
             .constraints

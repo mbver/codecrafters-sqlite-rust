@@ -1,4 +1,4 @@
-use std::io;
+use std::{cmp::Ordering, io};
 
 use crate::record::{Cell, Value, read_cell, read_record, read_varint};
 
@@ -118,6 +118,11 @@ impl RawPage {
         })?);
         Ok(children)
     }
+
+    // an index page can be a leaf page or interior page
+    // leaf node has no left_child but interior node has so we put left_child as optional
+    // all leaf nodes and interior nodes hold an actual value in the payload
+    // the payload is an index record, it holds 2 column: key's value and the row_id
     pub fn index_cells(&self) -> io::Result<Vec<IndexCell>> {
         let interior = match self.header.kind {
             PageKind::InteriorIndex => true,
@@ -178,6 +183,23 @@ pub struct IndexCell {
     pub values: Vec<Value>,      // indexed columns..., rowid last
 }
 
+impl IndexCell {
+    pub fn compare(&self, key: &Value) -> io::Result<Ordering> {
+        self.values
+            .first()
+            .and_then(|v| v.compare(key))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Incomparable index key"))
+    }
+    pub fn row_id(&self) -> io::Result<i64> {
+        match self.values.last() {
+            Some(Value::Integer(r)) => Ok(*r),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Index entry missing rowid",
+            )),
+        }
+    }
+}
 fn invalid(msg: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, msg.to_string())
 }
